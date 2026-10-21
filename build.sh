@@ -29,4 +29,6 @@ mkdir -p "${DEST:h}"
 rm -rf "$DEST"
 ditto "$APP" "$DEST"
 touch "$DEST"
+# Drop the build copy, or Spotlight lists the app twice.
+rm -rf "$BUILD"
 echo "built $DEST"
