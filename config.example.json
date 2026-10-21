@@ -1,0 +1,8 @@
+{
+  "extraFiles": {
+    "humanizer": { "scripts/copy_scan.py": "~/humanizer-stack/scripts/copy_scan.py" }
+  },
+  "textFixes": {
+    "humanizer": [["# from the repo root", "# from the skill folder"]]
+  }
+}
