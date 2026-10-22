@@ -27,8 +27,11 @@ for arg in "$@"; do
   esac
 done
 
-SIGN_IDENTITY=- NOTARY_PROFILE=
+SIGN_IDENTITY=- NOTARY_PROFILE= NOTARY_KEYCHAIN=
 [[ -f "$SRC/.signing.env" ]] && source "$SRC/.signing.env"
+# The notarytool profile lives in the login keychain unless NOTARY_KEYCHAIN names another (CI).
+NOTARY=(--keychain-profile "$NOTARY_PROFILE")
+[[ -n "$NOTARY_KEYCHAIN" ]] && NOTARY+=(--keychain "$NOTARY_KEYCHAIN")
 if (( RELEASE )) && [[ "$SIGN_IDENTITY" == "-" || -z "$NOTARY_PROFILE" ]]; then
   echo "--release needs SIGN_IDENTITY and NOTARY_PROFILE in .signing.env (see the top of build.sh)" >&2
   exit 2
@@ -52,7 +55,7 @@ codesign "${SIGN[@]}" "$APP"
 
 if (( RELEASE )); then
   ditto -c -k --keepParent "$APP" "$BUILD/notarize.zip"
-  xcrun notarytool submit "$BUILD/notarize.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$BUILD/notarize.zip" "${NOTARY[@]}" --wait
   rm "$BUILD/notarize.zip"
   xcrun stapler staple "$APP"
   spctl --assess --type execute "$APP"

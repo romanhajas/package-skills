@@ -117,6 +117,19 @@ Skills you hide are remembered in `~/.config/skill-bridge/hidden.json`.
 
 Not affiliated with Anthropic. Claude is a trademark of Anthropic.
 
+## Releasing
+
+Push a version tag and GitHub builds, signs, notarizes and publishes the app:
+
+```bash
+git tag v2.3 && git push origin v2.3
+```
+
+The workflow (`.github/workflows/release.yml`) needs six repository secrets: the
+Developer ID certificate exported as a .p12 (`DEVELOPER_ID_P12`, base64-encoded,
+and `DEVELOPER_ID_P12_PASSWORD`), `SIGN_IDENTITY`, and the notarization login
+(`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`, an app-specific password).
+
 ## License
 
 MIT
