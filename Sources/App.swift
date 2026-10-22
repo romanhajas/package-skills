@@ -8,18 +8,19 @@ enum Entry {
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         let invokedAs = URL(fileURLWithPath: CommandLine.arguments.first ?? "").lastPathComponent
-        if invokedAs == "package-skills" || args.first == "--cli" {
+        // package-skills: the command's name before the app was renamed.
+        if invokedAs == "skill-bridge" || invokedAs == "package-skills" || args.first == "--cli" {
             exit(CLI.run(args.filter { $0 != "--cli" }))
         }
-        PackageSkillsApp.main()
+        SkillBridgeApp.main()
     }
 }
 
-struct PackageSkillsApp: App {
+struct SkillBridgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Window("Package Skills", id: "main") {
+        Window("Skill Bridge", id: "main") {
             ContentView()
         }
         .defaultSize(width: 640, height: 680)
@@ -30,18 +31,24 @@ struct PackageSkillsApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// Keeps `package-skills` in ~/.local/bin pointing at this copy of the app, so the
+    /// Keeps `skill-bridge` in ~/.local/bin pointing at this copy of the app, so the
     /// Terminal command follows the app wherever it is moved. Never replaces a real file.
     func applicationDidFinishLaunching(_ notification: Notification) {
         let bin = Skills.home.appendingPathComponent(".local/bin")
-        let link = bin.appendingPathComponent("package-skills")
         guard let exe = Bundle.main.executableURL, FileManager.default.fileExists(atPath: bin.path) else { return }
-        let existing = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)
+        link(bin.appendingPathComponent("skill-bridge"), to: exe, create: true)
+        // The command's name before the rename keeps working where it already exists.
+        link(bin.appendingPathComponent("package-skills"), to: exe, create: false)
+    }
+
+    private func link(_ link: URL, to exe: URL, create: Bool) {
+        let fm = FileManager.default
+        let existing = try? fm.destinationOfSymbolicLink(atPath: link.path)
         if existing == exe.path { return }
-        if existing != nil || !FileManager.default.fileExists(atPath: link.path) {
-            try? FileManager.default.removeItem(at: link)
-            try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: exe)
-        }
+        let absent = existing == nil && !fm.fileExists(atPath: link.path)
+        guard existing != nil || (absent && create) else { return }
+        try? fm.removeItem(at: link)
+        try? fm.createSymbolicLink(at: link, withDestinationURL: exe)
     }
 }
 
@@ -113,7 +120,7 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Package Skills").font(.title2.weight(.semibold))
+                Text("Skill Bridge").font(.title2.weight(.semibold))
                 Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }
             Spacer()

@@ -1,5 +1,5 @@
 // CLI.swift - the same checks from Terminal. The app's binary runs this when it is
-// started as `package-skills` (a symlink the app keeps in ~/.local/bin) or with --cli.
+// started as `skill-bridge` (a symlink the app keeps in ~/.local/bin) or with --cli.
 
 import AppKit
 
@@ -12,14 +12,14 @@ enum CLI {
     skills that differ. Upload those in the Claude app: Settings -> Capabilities -> Skills.
 
     Usage:
-      package-skills                  check all your skills, build what changed
-      package-skills NAME ...         also send these skills on this Mac to Claude
-      package-skills --setup NAME     copy a skill from your Claude account onto this Mac
-      package-skills --hide NAME      stop offering to set it up on this Mac (--unhide to undo)
-      package-skills --discard NAME   drop a waiting ZIP for a skill not in Claude yet
-      package-skills --no-open        don't open the folder in Finder
+      skill-bridge                  check all your skills, build what changed
+      skill-bridge NAME ...         also send these skills on this Mac to Claude
+      skill-bridge --setup NAME     copy a skill from your Claude account onto this Mac
+      skill-bridge --hide NAME      stop offering to set it up on this Mac (--unhide to undo)
+      skill-bridge --discard NAME   drop a waiting ZIP for a skill not in Claude yet
+      skill-bridge --no-open        don't open the folder in Finder
 
-    Personal packaging rules: ~/.config/package-skills/config.json (see README).
+    Personal packaging rules: ~/.config/skill-bridge/config.json (see README).
     """
 
     static func run(_ args: [String]) -> Int32 {
@@ -77,7 +77,7 @@ enum CLI {
         let checked = report.syncedAt.map { $0.formatted(.dateTime.day().month(.abbreviated).hour().minute()) } ?? "unknown"
         print("\nCompared with your Claude account as of \(checked).")
         if !onlyInClaude.isEmpty { print("In Claude but not on this Mac: \(onlyInClaude.joined(separator: ", "))  (--setup NAME)") }
-        if !onlyOnMac.isEmpty { print("On this Mac but not in Claude: \(onlyOnMac.joined(separator: ", "))  (package-skills NAME to add)") }
+        if !onlyOnMac.isEmpty { print("On this Mac but not in Claude: \(onlyOnMac.joined(separator: ", "))  (skill-bridge NAME to add)") }
         print()
         if uploads > 0 {
             print("Upload \(uploads) ZIP(s) from \(Skills.outDir.path)")

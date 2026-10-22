@@ -40,7 +40,15 @@ enum Skills {
     static let skillsDir = home.appendingPathComponent(".claude/skills")
     static let syncedRoot = skillsDir.appendingPathComponent("synced")
     static let outDir = home.appendingPathComponent("Desktop/claude-skills-upload")
-    static let configDir = home.appendingPathComponent(".config/package-skills")
+    static let configDir: URL = {
+        let dir = home.appendingPathComponent(".config/skill-bridge")
+        // Settings from before the rename (Package Skills) move over once.
+        let old = home.appendingPathComponent(".config/package-skills")
+        if !FileManager.default.fileExists(atPath: dir.path), FileManager.default.fileExists(atPath: old.path) {
+            try? FileManager.default.moveItem(at: old, to: dir)
+        }
+        return dir
+    }()
     static let configFile = configDir.appendingPathComponent("config.json")
     static let hiddenFile = configDir.appendingPathComponent("hidden.json")
 
@@ -66,7 +74,7 @@ enum Skills {
         try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
         try? fm.removeItem(at: outDir.appendingPathComponent(".hashes.json"))  // left by version 1
 
-        let tmp = fm.temporaryDirectory.appendingPathComponent("package-skills-\(UUID().uuidString)")
+        let tmp = fm.temporaryDirectory.appendingPathComponent("skill-bridge-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: tmp) }
 
         let pendingNew = local.filter { !yours.contains($0) && (adding.contains($0) || fm.fileExists(atPath: zip(for: $0).path)) }
@@ -156,7 +164,7 @@ enum Skills {
 
     // MARK: - Staging
 
-    /// Personal packaging rules, from ~/.config/package-skills/config.json.
+    /// Personal packaging rules, from ~/.config/skill-bridge/config.json.
     struct Config {
         /// skill -> (path inside the skill -> file elsewhere on disk to ship there)
         var extraFiles: [String: [String: String]] = [:]
@@ -206,7 +214,7 @@ enum Skills {
     }
 
     static func writeZip(_ src: URL, to zipURL: URL) throws {
-        let work = fm.temporaryDirectory.appendingPathComponent("package-skills-zip-\(UUID().uuidString)")
+        let work = fm.temporaryDirectory.appendingPathComponent("skill-bridge-zip-\(UUID().uuidString)")
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: work) }
         let built = work.appendingPathComponent(zipURL.lastPathComponent)

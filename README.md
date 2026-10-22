@@ -1,21 +1,24 @@
-# Package Skills
+<p align="center"><img src="docs/icon.png" width="128" alt="Skill Bridge icon"></p>
+
+# Skill Bridge
 
 A small Mac app that keeps the skills in your Claude app in step with the ones
-you edit for Claude Code.
+you edit for Claude Code. (Formerly Package Skills; the old `package-skills`
+command still works.)
 
-![Package Skills window](docs/screenshot.png)
+![Skill Bridge window](docs/screenshot.png)
 
 You write and test a skill in `~/.claude/skills`, where Claude Code picks up
 every change. Getting that change into Claude chat (the desktop, web and mobile
 apps) means zipping the skill and uploading it under **Settings → Capabilities →
-Skills**. Package Skills tells you which skills actually need that, and builds
+Skills**. Skill Bridge tells you which skills actually need that, and builds
 the ZIPs for you.
 
 ## What it does
 
 - **Compares with your Claude account, not with its own history.** Claude Code
   keeps a copy of your Claude account's skills in `~/.claude/skills/synced/`.
-  Package Skills compares each of your skills with that copy, by content, and
+  Skill Bridge compares each of your skills with that copy, by content, and
   builds a ZIP only when Claude has an older version. The Claude app rewrites a
   skill's frontmatter on upload, so the header is compared by meaning, not byte
   for byte.
@@ -32,21 +35,22 @@ the ZIPs for you.
 
 ## Install
 
-Download `Package Skills.app` from the releases page, or build it:
+Download `Skill Bridge.app` from the releases page, or build it:
 
 ```bash
-git clone https://github.com/romanhajas/package-skills.git
-cd package-skills
-./build.sh            # builds and installs to ~/Desktop/Package Skills.app
+git clone https://github.com/romanhajas/skill-bridge.git
+cd skill-bridge
+./build.sh            # builds and installs to ~/Desktop/Skill Bridge.app
 ```
 
 Building needs Xcode or the Command Line Tools (`xcode-select --install`). The
 built app needs nothing: it's a universal binary for Apple silicon and Intel and
 runs on macOS 14 or later.
 
-The app is ad-hoc signed. If you got it as a download rather than building it,
-macOS will block the first open: go to **System Settings → Privacy & Security →
-Open Anyway**.
+Downloads are signed and notarized by Apple, so they open normally. Builds you
+make yourself are signed ad-hoc, which is fine on your own Mac; `./build.sh
+--release` signs with your Developer ID and notarizes when `.signing.env` names
+your certificate and notarytool profile (see the top of `build.sh`).
 
 You need Claude Code installed and signed in. That is how your Claude account's
 skills reach this Mac. It refreshes them every few minutes while it runs, so
@@ -56,23 +60,23 @@ synced.
 ## Terminal
 
 The app doubles as a command. When `~/.local/bin` exists, it keeps
-`~/.local/bin/package-skills` pointing at itself:
+`~/.local/bin/skill-bridge` pointing at itself:
 
 ```text
-package-skills                  check all your skills, build what changed
-package-skills NAME ...         also send these skills on this Mac to Claude
-package-skills --setup NAME     copy a skill from your Claude account onto this Mac
-package-skills --hide NAME      stop offering to set it up on this Mac (--unhide to undo)
-package-skills --discard NAME   drop a waiting ZIP for a skill not in Claude yet
-package-skills --no-open        don't open the folder in Finder
+skill-bridge                  check all your skills, build what changed
+skill-bridge NAME ...         also send these skills on this Mac to Claude
+skill-bridge --setup NAME     copy a skill from your Claude account onto this Mac
+skill-bridge --hide NAME      stop offering to set it up on this Mac (--unhide to undo)
+skill-bridge --discard NAME   drop a waiting ZIP for a skill not in Claude yet
+skill-bridge --no-open        don't open the folder in Finder
 ```
 
-Without the link: `"/Applications/Package Skills.app/Contents/MacOS/PackageSkills" --cli`.
+Without the link: `"/Applications/Skill Bridge.app/Contents/MacOS/SkillBridge" --cli`.
 
 ## Personal packaging rules
 
 Some skills keep a file outside their folder, for example in a repository they
-were cloned from. List those in `~/.config/package-skills/config.json` and they
+were cloned from. List those in `~/.config/skill-bridge/config.json` and they
 are copied into the ZIP; `textFixes` then edits `SKILL.md` to match. See
 [`config.example.json`](config.example.json):
 
@@ -87,12 +91,12 @@ are copied into the ZIP; `textFixes` then edits `SKILL.md` to match. See
 }
 ```
 
-Skills you hide are remembered in `~/.config/package-skills/hidden.json`.
+Skills you hide are remembered in `~/.config/skill-bridge/hidden.json`.
 
 ## Good to know
 
 - It reads `~/.claude/skills` and Claude Code's synced copy, and writes only to
-  `~/Desktop/claude-skills-upload`, `~/.config/package-skills` and, when you
+  `~/Desktop/claude-skills-upload`, `~/.config/skill-bridge` and, when you
   ask it to set up a skill, `~/.claude/skills/<name>`. No network access and no
   login of its own.
 - The synced copy is how Claude Code stores your skills today; a future Claude
