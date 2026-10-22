@@ -45,7 +45,13 @@ the ZIPs for you.
 
 ## Install
 
-Download `Skill Bridge.app` from the releases page, or build it:
+With [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask romanhajas/tap/skill-bridge
+```
+
+Or download `Skill Bridge.app` from the releases page, or build it:
 
 ```bash
 git clone https://github.com/romanhajas/skill-bridge.git
