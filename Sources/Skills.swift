@@ -35,6 +35,28 @@ struct Report: Sendable {
     var noSync = false
 }
 
+/// One line of a compact diff: "-" for a line only in Claude's copy, "+" for one only here.
+struct DiffLine: Hashable, Sendable {
+    let sign: Character
+    let text: String
+}
+
+/// How one file of a skill differs from the copy in the Claude account.
+struct FileChange: Identifiable, Sendable {
+    enum Kind: Sendable { case added, removed, modified }
+    let path: String
+    let kind: Kind
+    var note: String? = nil
+    var lines: [DiffLine] = []
+    var id: String { path }
+}
+
+struct SkillChanges: Sendable {
+    /// Not in the Claude account yet: every file is new.
+    let isNew: Bool
+    let files: [FileChange]
+}
+
 enum Skills {
     static let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory())
     static let skillsDir = home.appendingPathComponent(".claude/skills")
@@ -56,6 +78,9 @@ enum Skills {
     static let allowedKeys: Set<String> = ["name", "description", "license", "allowed-tools", "metadata", "compatibility"]
     static let ignoredNames: Set<String> = [".DS_Store", "__pycache__", ".git"]
     static let blockScalars: Set<String> = ["|", ">", "|-", ">-", "|+", ">+"]
+    /// Words a skill's name may not contain.
+    static let reservedWords = ["anthropic", "claude"]
+    static let maxZipBytes = 20 * 1_048_576
 
     private static let fm = FileManager.default
 
@@ -81,13 +106,17 @@ enum Skills {
         var rows: [SkillRow] = []
         for name in local.filter(yours.contains) + pendingNew {
             do {
-                let (staged, notes) = try stage(name, in: tmp, config: config)
+                var (staged, notes) = try stage(name, in: tmp, config: config)
                 let isYours = yours.contains(name)
                 if isYours, try sameSkill(staged, claude.folder.appendingPathComponent(name)) {
                     try? fm.removeItem(at: zip(for: name))
                     rows.append(SkillRow(name: name, state: .upToDate, notes: notes))
                 } else {
                     try writeZip(staged, to: zip(for: name))
+                    let bytes = (try? fm.attributesOfItem(atPath: zip(for: name).path)[.size] as? NSNumber)?.intValue ?? 0
+                    if bytes > maxZipBytes {
+                        notes.append("WARNING: the ZIP is \(bytes / 1_048_576) MB, which may be too big to upload (over 20 MB)")
+                    }
                     rows.append(SkillRow(name: name, state: .upload(new: !isYours), notes: notes))
                 }
             } catch {
@@ -204,13 +233,53 @@ enum Skills {
         try fixed.write(to: skillMD, atomically: true, encoding: .utf8)
 
         var notes = moved.isEmpty ? [] : ["moved \(moved.joined(separator: ", ")) under metadata"]
-        let lines = try splitFrontmatter(fixed).lines
+        let (lines, body) = try splitFrontmatter(fixed)
         let declared = field(lines, "name")
         if declared != name { notes.append("WARNING: frontmatter name is \(declared.map { "'\($0)'" } ?? "missing"), folder is '\(name)'") }
+        if let declared {
+            if declared.count > 64 { notes.append("WARNING: name is \(declared.count) chars (limit 64)") }
+            if declared.range(of: "^[a-z0-9-]+$", options: .regularExpression) == nil {
+                notes.append("WARNING: name may only use lowercase letters, numbers and hyphens")
+            }
+            for word in reservedWords where declared.lowercased().contains(word) {
+                notes.append("WARNING: name contains the reserved word '\(word)'")
+            }
+        }
         let desc = field(lines, "description") ?? ""
         if desc.isEmpty { notes.append("WARNING: no description") }
         else if desc.count > 1024 { notes.append("WARNING: description is \(desc.count) chars (limit 1024)") }
+        if desc.contains("<") || desc.contains(">") { notes.append("WARNING: description contains < or >, read as XML tags") }
+        for ref in references(in: body, skill: dst) where !fm.fileExists(atPath: dst.appendingPathComponent(ref).path) {
+            notes.append("WARNING: SKILL.md refers to \(ref), which isn't in the skill")
+        }
         return (dst, notes)
+    }
+
+    /// Relative files SKILL.md points at: markdown links, and backticked paths whose
+    /// first folder exists in the skill (so `src/app.ts` in an example isn't counted).
+    static func references(in body: String, skill: URL) -> [String] {
+        var found: [String] = []
+        func matches(_ pattern: String) -> [String] {
+            guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+            let range = NSRange(body.startIndex..., in: body)
+            return re.matches(in: body, range: range).compactMap { Range($0.range(at: 1), in: body).map { String(body[$0]) } }
+        }
+        for link in matches(#"\[[^\]]*\]\(([^)\s]+)\)"#) {
+            var path = link.components(separatedBy: "#")[0].components(separatedBy: "?")[0]
+            if path.hasPrefix("./") { path.removeFirst(2) }
+            guard !path.isEmpty, !path.contains(":"), !path.hasPrefix("/"), !path.hasPrefix("~") else { continue }
+            found.append(path.removingPercentEncoding ?? path)
+        }
+        for code in matches(#"`([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+)`"#) {
+            let path = code.hasPrefix("./") ? String(code.dropFirst(2)) : code
+            var isDir: ObjCBool = false
+            let first = path.components(separatedBy: "/")[0]
+            if fm.fileExists(atPath: skill.appendingPathComponent(first).path, isDirectory: &isDir), isDir.boolValue {
+                found.append(path)
+            }
+        }
+        var seen = Set<String>()
+        return found.filter { seen.insert($0).inserted }
     }
 
     static func writeZip(_ src: URL, to zipURL: URL) throws {
@@ -269,6 +338,63 @@ enum Skills {
             }
         }
         return true
+    }
+
+    /// What would change in the Claude account if this skill were uploaded now: each
+    /// added, removed or modified file, compared the same way as sameSkill.
+    static func changes(for name: String) throws -> SkillChanges {
+        let tmp = fm.temporaryDirectory.appendingPathComponent("skill-bridge-changes-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: tmp) }
+        let (staged, _) = try stage(name, in: tmp, config: Config.load())
+        guard let claude = claudeCopy(), claude.yours.contains(name),
+              fm.fileExists(atPath: claude.folder.appendingPathComponent(name).path) else {
+            return SkillChanges(isNew: true, files: files(staged).sorted().map { FileChange(path: $0, kind: .added) })
+        }
+        let remote = claude.folder.appendingPathComponent(name)
+        let here = Set(files(staged)), there = Set(files(remote))
+        var out: [FileChange] = []
+        for rel in here.union(there).sorted() {
+            guard there.contains(rel) else { out.append(FileChange(path: rel, kind: .added)); continue }
+            guard here.contains(rel) else { out.append(FileChange(path: rel, kind: .removed)); continue }
+            let mine = try Data(contentsOf: staged.appendingPathComponent(rel))
+            let theirs = try Data(contentsOf: remote.appendingPathComponent(rel))
+            if rel == "SKILL.md" {
+                let a = try splitFrontmatter(String(decoding: mine, as: UTF8.self))
+                let b = try splitFrontmatter(String(decoding: theirs, as: UTF8.self))
+                let ma = frontmatterMeaning(a.lines), mb = frontmatterMeaning(b.lines)
+                let keys = Set(ma.keys).union(mb.keys).filter { ma[$0] != mb[$0] }.sorted()
+                let bodyChanged = trimmed(a.body) != trimmed(b.body)
+                guard !keys.isEmpty || bodyChanged else { continue }
+                var change = FileChange(path: rel, kind: .modified)
+                if !keys.isEmpty { change.note = "Frontmatter changed: \(keys.joined(separator: ", "))" }
+                if bodyChanged { change.lines = diff(old: trimmed(b.body), new: trimmed(a.body)) }
+                out.append(change)
+            } else if mine != theirs {
+                var change = FileChange(path: rel, kind: .modified)
+                if let new = String(data: mine, encoding: .utf8), let old = String(data: theirs, encoding: .utf8) {
+                    change.lines = diff(old: old, new: new)
+                } else {
+                    change.note = "Binary file changed"
+                }
+                out.append(change)
+            }
+        }
+        return SkillChanges(isNew: false, files: out)
+    }
+
+    /// The lines only in `old` ("-") and only in `new` ("+"), in file order, capped.
+    static func diff(old: String, new: String, limit: Int = 200) -> [DiffLine] {
+        let a = old.components(separatedBy: "\n"), b = new.components(separatedBy: "\n")
+        var lines: [(offset: Int, order: Int, line: DiffLine)] = []
+        for change in b.difference(from: a) {
+            switch change {
+            case let .remove(offset, element, _): lines.append((offset, 0, DiffLine(sign: "-", text: element)))
+            case let .insert(offset, element, _): lines.append((offset, 1, DiffLine(sign: "+", text: element)))
+            }
+        }
+        let sorted = lines.sorted { ($0.offset, $0.order) < ($1.offset, $1.order) }.map(\.line)
+        guard sorted.count > limit else { return sorted }
+        return Array(sorted.prefix(limit)) + [DiffLine(sign: "…", text: "\(sorted.count - limit) more changed lines")]
     }
 
     static func files(_ root: URL) -> [String] {

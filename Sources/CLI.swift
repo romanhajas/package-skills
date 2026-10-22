@@ -17,6 +17,7 @@ enum CLI {
       skill-bridge --setup NAME     copy a skill from your Claude account onto this Mac
       skill-bridge --hide NAME      stop offering to set it up on this Mac (--unhide to undo)
       skill-bridge --discard NAME   drop a waiting ZIP for a skill not in Claude yet
+      skill-bridge --changes NAME   show what differs from the copy in your Claude account
       skill-bridge --no-open        don't open the folder in Finder
 
     Personal packaging rules: ~/.config/skill-bridge/config.json (see README).
@@ -25,7 +26,7 @@ enum CLI {
     static func run(_ args: [String]) -> Int32 {
         let flags = Set(args.filter { $0.hasPrefix("-") })
         let names = args.filter { !$0.hasPrefix("-") }
-        let known: Set<String> = ["--no-open", "--setup", "--hide", "--unhide", "--discard", "-h", "--help"]
+        let known: Set<String> = ["--no-open", "--setup", "--hide", "--unhide", "--discard", "--changes", "-h", "--help"]
         if !flags.subtracting(known).isEmpty {
             print("unknown option: \(flags.subtracting(known).sorted().joined(separator: " "))\n\n\(usage)")
             return 2
@@ -43,6 +44,10 @@ enum CLI {
             }
             if flags.contains("--discard") {
                 names.forEach(Skills.discard)
+                return 0
+            }
+            if flags.contains("--changes") {
+                for name in names { printChanges(name, try Skills.changes(for: name)) }
                 return 0
             }
         } catch {
@@ -87,5 +92,21 @@ enum CLI {
             print("Everything matches your Claude account. No upload needed.")
         }
         return failed ? 1 : 0
+    }
+
+    static func printChanges(_ name: String, _ changes: SkillChanges) {
+        if changes.isNew {
+            print("\(name): new skill, \(changes.files.count) files")
+            changes.files.forEach { print("  + \($0.path)") }
+            return
+        }
+        guard !changes.files.isEmpty else { print("\(name): same as in your Claude account"); return }
+        print("\(name): \(changes.files.count) file(s) differ from your Claude account")
+        for file in changes.files {
+            let kind = switch file.kind { case .added: "added"; case .removed: "removed"; case .modified: "modified" }
+            print("\n  \(file.path) (\(kind))")
+            if let note = file.note { print("    \(note)") }
+            file.lines.forEach { print("    \($0.sign) \($0.text)") }
+        }
     }
 }

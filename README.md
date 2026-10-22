@@ -28,10 +28,20 @@ the ZIPs for you.
   but not on this Mac can be copied into `~/.claude/skills` with one click.
 - **Sends new skills to Claude.** Skills on this Mac that aren't in your account
   yet are listed; **Add to Claude** builds their ZIP.
-- **Fixes what the uploader rejects.** Frontmatter keys the Claude app doesn't
-  accept (for example `version:`) are moved under `metadata:`, and it warns about
-  a missing description, one over 1024 characters, or a `name` that doesn't match
-  the folder.
+- **Shows what changed.** **Changes** lists every file that differs from the
+  copy in your Claude account, with the changed lines, before you upload.
+- **Drag and drop.** Drag a skill from the list straight into Claude's upload
+  dialog; its ZIP comes along.
+- **Catches what the uploader rejects.** Frontmatter keys the Claude app doesn't
+  accept (for example `version:`) are moved under `metadata:`. It warns before
+  you upload about a `name` that isn't lowercase letters, numbers and hyphens, is
+  over 64 characters, contains "anthropic" or "claude", or doesn't match the
+  folder; a missing description, one over 1024 characters, or one with `<` or
+  `>`; files that `SKILL.md` refers to but the skill doesn't contain; and ZIPs
+  over 20 MB.
+- **Tells you about new versions.** Once a day it looks for a newer release on
+  GitHub and shows a link in the window when there is one (**Skill Bridge →
+  Check for Updates…** checks right away).
 
 ## Install
 
@@ -68,6 +78,7 @@ skill-bridge NAME ...         also send these skills on this Mac to Claude
 skill-bridge --setup NAME     copy a skill from your Claude account onto this Mac
 skill-bridge --hide NAME      stop offering to set it up on this Mac (--unhide to undo)
 skill-bridge --discard NAME   drop a waiting ZIP for a skill not in Claude yet
+skill-bridge --changes NAME   show what differs from the copy in your Claude account
 skill-bridge --no-open        don't open the folder in Finder
 ```
 
@@ -97,8 +108,9 @@ Skills you hide are remembered in `~/.config/skill-bridge/hidden.json`.
 
 - It reads `~/.claude/skills` and Claude Code's synced copy, and writes only to
   `~/Desktop/claude-skills-upload`, `~/.config/skill-bridge` and, when you
-  ask it to set up a skill, `~/.claude/skills/<name>`. No network access and no
-  login of its own.
+  ask it to set up a skill, `~/.claude/skills/<name>`. Its only network request
+  is the daily update check against GitHub's public releases; it has no login of
+  its own.
 - The synced copy is how Claude Code stores your skills today; a future Claude
   Code update could change that.
 - The icon is drawn by `tools/make-icon.swift`.

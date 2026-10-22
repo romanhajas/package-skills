@@ -25,7 +25,71 @@ struct SkillBridgeApp: App {
         }
         .defaultSize(width: 640, height: 680)
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
+            }
+        }
     }
+}
+
+/// Looks for a newer release on GitHub once a day, or when asked.
+@MainActor
+final class Updater: ObservableObject {
+    static let shared = Updater()
+    static let latestAPI = URL(string: "https://api.github.com/repos/romanhajas/skill-bridge/releases/latest")!
+    private static let lastCheckKey = "lastUpdateCheck"
+
+    /// A newer version and its release page, once found.
+    @Published var available: (version: String, page: URL)?
+    /// The answer to a check you asked for, shown as an alert.
+    @Published var message: String?
+
+    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
+
+    func checkIfDue() {
+        let last = UserDefaults.standard.double(forKey: Self.lastCheckKey)
+        if Date().timeIntervalSince1970 - last > 24 * 3600 { Task { await check(manual: false) } }
+    }
+
+    func check(manual: Bool) async {
+        var request = URLRequest(url: Self.latestAPI, timeoutInterval: 15)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let release = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let tag = release["tag_name"] as? String else {
+            if manual { message = "Couldn't reach GitHub to check for updates." }
+            return
+        }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.lastCheckKey)
+        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        if Self.isNewer(version, than: current) {
+            let page = (release["html_url"] as? String).flatMap(URL.init(string:))
+                ?? URL(string: "https://github.com/romanhajas/skill-bridge/releases/latest")!
+            available = (version, page)
+            if manual { NSWorkspace.shared.open(page) }
+        } else if manual {
+            message = "Skill Bridge \(current) is the latest version."
+        }
+    }
+
+    /// Compares "2.10" > "2.9" by number, part by part; missing parts count as 0.
+    static func isNewer(_ candidate: String, than current: String) -> Bool {
+        func parts(_ v: String) -> [Int] { v.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 } }
+        let a = parts(candidate), b = parts(current)
+        for i in 0..<max(a.count, b.count) {
+            let x = i < a.count ? a[i] : 0, y = i < b.count ? b[i] : 0
+            if x != y { return x > y }
+        }
+        return false
+    }
+}
+
+/// The skill whose changes the sheet shows.
+struct ChangesSheet: Identifiable {
+    let name: String
+    let changes: SkillChanges
+    var id: String { name }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -57,8 +121,22 @@ final class Model: ObservableObject {
     @Published var report: Report?
     @Published var busy = false
     @Published var error: String?
+    @Published var changes: ChangesSheet?
 
     func refresh() { run { } }
+
+    /// Works out what differs from the Claude copy, off the main thread, then shows it.
+    func showChanges(_ name: String) {
+        Task.detached {
+            let result = Result { try Skills.changes(for: name) }
+            await MainActor.run {
+                switch result {
+                case .success(let changes): self.changes = ChangesSheet(name: name, changes: changes)
+                case .failure(let error): self.error = error.localizedDescription
+                }
+            }
+        }
+    }
     func add(_ name: String) { run(adding: [name]) { } }
     func setUp(_ name: String) { run { try Skills.setUp(name) } }
     func hide(_ name: String, _ hide: Bool) { run { try Skills.setHidden(name, hide) } }
@@ -90,6 +168,7 @@ final class Model: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var model = Model()
+    @ObservedObject private var updater = Updater.shared
     @AppStorage("showLocal") private var showLocal = false
     @AppStorage("showHidden") private var showHidden = false
 
@@ -104,7 +183,14 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 540, minHeight: 480)
-        .onAppear { model.refresh() }
+        .onAppear {
+            model.refresh()
+            updater.checkIfDue()
+        }
+        .sheet(item: $model.changes) { ChangesView(sheet: $0) }
+        .alert(updater.message ?? "", isPresented: Binding(get: { updater.message != nil }, set: { if !$0 { updater.message = nil } })) {
+            Button("OK", role: .cancel) {}
+        }
         // Back from uploading in the Claude app: look again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if model.report != nil { model.refresh() }
@@ -124,6 +210,11 @@ struct ContentView: View {
                 Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
+            if let update = updater.available {
+                Button("Skill Bridge \(update.version) is available") { NSWorkspace.shared.open(update.page) }
+                    .buttonStyle(.link)
+                    .font(.callout)
+            }
             if model.busy { ProgressView().controlSize(.small) }
             Button { model.refresh() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                 .disabled(model.busy)
@@ -213,6 +304,8 @@ struct ContentView: View {
                     Text(uploads == 1 ? "1 skill to upload" : "\(uploads) skills to upload").font(.headline)
                     Text("In the Claude app: Settings → Capabilities → Skills. Replace the old version.")
                         .font(.callout).foregroundStyle(.secondary)
+                    Text("Drag a row into Claude, or Open Folder & Claude.")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Open Folder & Claude") { model.openFolderAndClaude() }
@@ -232,9 +325,10 @@ struct ContentView: View {
         .background(uploads > 0 ? Color.orange.opacity(0.08) : Color.green.opacity(0.06))
     }
 
+    @ViewBuilder
     private func row(_ row: SkillRow) -> some View {
         let (icon, color, detail) = describe(row.state)
-        return HStack(spacing: 10) {
+        let line = HStack(spacing: 10) {
             Image(systemName: icon).foregroundStyle(color).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.name).font(.body.weight(.medium))
@@ -247,6 +341,16 @@ struct ContentView: View {
             actions(row)
         }
         .padding(.vertical, 3)
+        .contentShape(Rectangle())
+
+        if case .upload = row.state {
+            // Drag the row to drop its ZIP into Claude's upload dialog or window.
+            line
+                .onDrag { NSItemProvider(contentsOf: Skills.zip(for: row.name)) ?? NSItemProvider() }
+                .help("Drag into Claude to upload \(row.name).zip")
+        } else {
+            line
+        }
     }
 
     private func describe(_ state: SkillRow.State) -> (String, Color, String) {
@@ -266,6 +370,7 @@ struct ContentView: View {
         HStack(spacing: 6) {
             switch row.state {
             case .upload(let new):
+                Button("Changes") { model.showChanges(row.name) }
                 Button("Show ZIP") { NSWorkspace.shared.activateFileViewerSelecting([Skills.zip(for: row.name)]) }
                 if new { Button("Cancel") { model.discard(row.name) } }
             case .upToDate:
@@ -283,5 +388,73 @@ struct ContentView: View {
         }
         .controlSize(.small)
         .disabled(model.busy)
+    }
+}
+
+/// What uploading a skill would change in the Claude account, file by file.
+struct ChangesView: View {
+    let sheet: ChangesSheet
+    @Environment(\.dismiss) private var dismiss
+
+    private var summary: String {
+        let n = sheet.changes.files.count
+        if sheet.changes.isNew { return "New skill: \(n) file\(n == 1 ? "" : "s")" }
+        if n == 0 { return "No differences from your Claude account" }
+        return "\(n) file\(n == 1 ? "" : "s") differ from your Claude account"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(sheet.name).font(.title3.weight(.semibold))
+                    Text(summary).font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    ForEach(sheet.changes.files) { file($0) }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(width: 640, height: 520)
+    }
+
+    private func file(_ change: FileChange) -> some View {
+        let (icon, color, label): (String, Color, String) = switch change.kind {
+        case .added: ("plus.circle.fill", .green, "added")
+        case .removed: ("minus.circle.fill", .red, "removed")
+        case .modified: ("pencil.circle.fill", .orange, "modified")
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).foregroundStyle(color)
+                Text(change.path).font(.system(.body, design: .monospaced).weight(.medium))
+                Text(label).font(.caption).foregroundStyle(.secondary)
+            }
+            if let note = change.note {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+            }
+            if !change.lines.isEmpty {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(change.lines.enumerated()), id: \.offset) { _, line in
+                        Text("\(String(line.sign)) \(line.text)")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(line.sign == "-" ? Color.red : line.sign == "+" ? Color.green : Color.secondary)
+                            .lineLimit(3)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
     }
 }
